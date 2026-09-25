@@ -18,7 +18,8 @@ import {
 } from './types';
 import { 
   initAuth, 
-  testConnection 
+  testConnection,
+  auth
 } from './lib/firebase';
 import {
   getOrCreateUserProfile,
@@ -91,8 +92,9 @@ export default function App() {
     }
 
     if (targetPath === '/support') {
-      // Check Protected Route
-      if (!currentUser) {
+      // Check Protected Route using current user state or active Firebase auth instance
+      const activeUser = currentUser || auth.currentUser;
+      if (!activeUser) {
         setIsAuthModalOpen(true);
         setRouteRestrictedNotice('Please sign in to access the Support Console.');
         return;
@@ -136,6 +138,7 @@ export default function App() {
       async (firebaseUser) => {
         setCurrentUser(firebaseUser);
         if (firebaseUser) {
+          setIsAuthModalOpen(false);
           try {
             const profile = await getOrCreateUserProfile(firebaseUser);
             setUserProfile(profile);
@@ -176,6 +179,13 @@ export default function App() {
       if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, []);
+
+  // Safeguard: whenever currentUser is logged in, ensure auth modal is closed
+  useEffect(() => {
+    if (currentUser) {
+      setIsAuthModalOpen(false);
+    }
+  }, [currentUser]);
 
   // Listen for real-time user role updates in Firestore
   useEffect(() => {

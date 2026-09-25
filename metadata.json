@@ -1,0 +1,6 @@
+{
+  "name": "ResolveAI - Support Resolution Agent",
+  "description": "ResolveAI is a hybrid customer-support resolution system seamlessly transitioning between AI assistance and human support operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

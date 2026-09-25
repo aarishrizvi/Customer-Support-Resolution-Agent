@@ -1,0 +1,127 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Represents an authenticated user profile in the ResolveAI system.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "enum": ["CUSTOMER", "SUPPORT_AGENT"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Represents a customer support thread with lifecycle dispatch state.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "customerId": { "type": "string", "maxLength": 128 },
+        "customerName": { "type": "string", "maxLength": 128 },
+        "customerEmail": { "type": "string", "maxLength": 256 },
+        "title": { "type": "string", "maxLength": 256 },
+        "category": { "type": "string", "enum": ["Billing", "Account", "Technical", "Orders", "General"] },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "URGENT"] },
+        "status": { "type": "string", "enum": ["AI_HANDLING", "WAITING_FOR_CUSTOMER", "NEEDS_HUMAN", "HUMAN_HANDLING", "ASSIGNED", "RESOLVED", "ESCALATED"] },
+        "handlerType": { "type": "string", "enum": ["AI", "HUMAN"] },
+        "assignedAgentId": { "type": "string", "maxLength": 128 },
+        "assignedAgentName": { "type": "string", "maxLength": 128 },
+        "aiSummary": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "resolvedAt": { "type": "string", "format": "date-time" },
+        "lastMessageText": { "type": "string", "maxLength": 2000 },
+        "lastMessageTimestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["customerId", "customerEmail", "title", "status"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "An individual message within a support conversation.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "conversationId": { "type": "string", "maxLength": 128 },
+        "senderId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 128 },
+        "senderRole": { "type": "string", "enum": ["CUSTOMER", "AI", "AGENT", "SYSTEM"] },
+        "content": { "type": "string", "maxLength": 5000 },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "operationalState": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["conversationId", "senderRole", "content"]
+    },
+    "KnowledgeArticle": {
+      "title": "KnowledgeArticle",
+      "description": "Standard operating procedure or troubleshooting article for support.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 256 },
+        "category": { "type": "string", "maxLength": 64 },
+        "content": { "type": "string", "maxLength": 10000 },
+        "excerpt": { "type": "string", "maxLength": 500 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "category", "content"]
+    },
+    "CustomerProfile": {
+      "title": "CustomerProfile",
+      "description": "Enriched customer operational record.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "tier": { "type": "string", "enum": ["Enterprise", "Pro", "Standard"] },
+        "previousTicketsCount": { "type": "integer" },
+        "notes": { "type": "string", "maxLength": 1000 }
+      },
+      "required": ["name", "email"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Audit log of operational actions within the system.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "conversationId": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 500 },
+        "actorName": { "type": "string", "maxLength": 128 },
+        "actorRole": { "type": "string", "maxLength": 64 },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["conversationId", "type", "description"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "User" },
+      "description": "User profiles and assigned role definitions"
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "Conversation" },
+      "description": "Support conversations and dispatch statuses"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "Message" },
+      "description": "Messages within each conversation thread"
+    },
+    "/knowledgeBase/{articleId}": {
+      "schema": { "$ref": "KnowledgeArticle" },
+      "description": "Knowledge base articles referenced by AI and support agents"
+    },
+    "/customers/{customerId}": {
+      "schema": { "$ref": "CustomerProfile" },
+      "description": "Customer CRM profiles with support tier and history"
+    },
+    "/activities/{activityId}": {
+      "schema": { "$ref": "Activity" },
+      "description": "Operational audit log events"
+    }
+  }
+}

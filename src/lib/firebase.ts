@@ -28,7 +28,24 @@ import {
   serverTimestamp,
   Firestore
 } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+
+// Firebase configuration from environment variables
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+};
+
+// Validate required Firebase config
+const requiredKeys = ['apiKey', 'authDomain', 'projectId', 'storageBucket', 'messagingSenderId', 'appId'];
+const missingKeys = requiredKeys.filter(key => !firebaseConfig[key as keyof typeof firebaseConfig]);
+if (missingKeys.length > 0) {
+  console.error('[Firebase] Missing required environment variables:', missingKeys.join(', '));
+  console.error('[Firebase] Please check your .env.local file and ensure all VITE_FIREBASE_* variables are set.');
+}
 
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -38,13 +55,9 @@ export const auth = getAuth(app);
 // 'client is offline' errors in iframe and proxy environments
 let firestoreInstance: Firestore;
 try {
-  firestoreInstance = (firebaseConfig as any).firestoreDatabaseId 
-    ? initializeFirestore(app, { experimentalForceLongPolling: true }, (firebaseConfig as any).firestoreDatabaseId)
-    : initializeFirestore(app, { experimentalForceLongPolling: true });
+  firestoreInstance = initializeFirestore(app, { experimentalForceLongPolling: true });
 } catch {
-  firestoreInstance = (firebaseConfig as any).firestoreDatabaseId 
-    ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
-    : getFirestore(app);
+  firestoreInstance = getFirestore(app);
 }
 export const db: Firestore = firestoreInstance;
 

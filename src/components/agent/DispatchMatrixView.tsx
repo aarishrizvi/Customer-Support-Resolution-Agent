@@ -23,7 +23,7 @@ export const DispatchMatrixView: React.FC<DispatchMatrixViewProps> = ({
 }) => {
   const aiHandling = conversations.filter((c) => c.status === 'AI_HANDLING');
   const needsHuman = conversations.filter((c) => c.status === 'NEEDS_HUMAN');
-  const humanHandling = conversations.filter((c) => c.status === 'ASSIGNED');
+  const humanHandling = conversations.filter((c) => c.status === 'ASSIGNED' || c.status === 'HUMAN_HANDLING');
   const resolved = conversations.filter((c) => c.status === 'RESOLVED');
 
   return (

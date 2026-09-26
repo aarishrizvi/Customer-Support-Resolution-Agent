@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowRight, MessageSquare, Clock3, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
+import { ArrowRight, MessageSquare, Clock3, CheckCircle, AlertCircle, Loader2, Sparkles } from 'lucide-react';
 import { Conversation, TicketCategory } from '../../types';
 
 interface CustomerPortalProps {
@@ -7,13 +7,15 @@ interface CustomerPortalProps {
   onOpenConversation: (conversationId: string) => void;
   onStartNewConversation: (title: string, category: TicketCategory) => void;
   customerName?: string;
+  isStarting?: boolean;
 }
 
 export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   conversations,
   onOpenConversation,
   onStartNewConversation,
-  customerName = 'Sarah Khan'
+  customerName = 'Sarah Khan',
+  isStarting = false
 }) => {
   const [problemText, setProblemText] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<TicketCategory>('Billing');
@@ -22,7 +24,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!problemText.trim()) return;
+    if (!problemText.trim() || isStarting) return;
     onStartNewConversation(problemText.trim(), selectedCategory);
     setProblemText('');
   };
@@ -43,12 +45,14 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
             Dispatched to Agent
           </span>
         );
+      case 'HUMAN_HANDLING':
       case 'ASSIGNED':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
             Support Agent Active
           </span>
         );
+      case 'WAITING_FOR_CUSTOMER':
       case 'WAITING_CUSTOMER':
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
@@ -91,13 +95,19 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
             />
             <button
               type="submit"
-              disabled={!problemText.trim()}
+              disabled={!problemText.trim() || isStarting}
               className="absolute right-2 p-2 rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 transition-all"
               title="Start conversation"
             >
-              <ArrowRight className="w-4 h-4" />
+              {isStarting ? <Loader2 className="w-4 h-4 animate-spin" /> : <ArrowRight className="w-4 h-4" />}
             </button>
           </div>
+          {isStarting && (
+            <p className="mt-2 text-xs text-neutral-500 dark:text-neutral-400 flex items-center gap-1.5">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Opening your conversation and asking ResolveAI...
+            </p>
+          )}
         </form>
 
         {/* Category Filter Chips */}

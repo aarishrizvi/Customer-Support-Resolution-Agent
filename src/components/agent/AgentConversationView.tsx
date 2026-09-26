@@ -98,7 +98,10 @@ export const AgentConversationView: React.FC<AgentConversationViewProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 flex-wrap">
-          {!isAssignedToCurrent && conversation.status !== 'RESOLVED' && (
+          {!isAssignedToCurrent &&
+            conversation.status !== 'RESOLVED' &&
+            conversation.status !== 'ASSIGNED' &&
+            conversation.status !== 'HUMAN_HANDLING' && (
             <button
               onClick={onTakeConversation}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90 transition-opacity shadow-xs"

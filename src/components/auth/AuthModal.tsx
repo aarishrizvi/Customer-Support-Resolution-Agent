@@ -264,7 +264,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   />
                 </div>
                 <p className="text-[10px] text-neutral-400 mt-1">
-                  New customer accounts are automatically registered with standard support access.
+                  New accounts are created as Customers. Support Console access is granted by an administrator.
                 </p>
               </div>
             )}

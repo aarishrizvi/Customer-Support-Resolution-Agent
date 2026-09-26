@@ -41,10 +41,12 @@ export const QueueSidebar: React.FC<QueueSidebarProps> = ({
   const counts = {
     NEEDS_HUMAN: conversations.filter((c) => c.status === 'NEEDS_HUMAN').length,
     ASSIGNED_TO_ME: conversations.filter(
-      (c) => c.status === 'ASSIGNED' && (c.assignedAgentId === currentAgentId || c.assignedAgentName?.includes('Afnan'))
+      (c) =>
+        (c.status === 'ASSIGNED' || c.status === 'HUMAN_HANDLING') &&
+        (c.assignedAgentId === currentAgentId || c.assignedAgentName?.includes('Afnan'))
     ).length,
     AI_HANDLING: conversations.filter((c) => c.status === 'AI_HANDLING').length,
-    WAITING_CUSTOMER: conversations.filter((c) => c.status === 'WAITING_CUSTOMER').length,
+    WAITING_CUSTOMER: conversations.filter((c) => c.status === 'WAITING_CUSTOMER' || c.status === 'WAITING_FOR_CUSTOMER').length,
     RESOLVED: conversations.filter((c) => c.status === 'RESOLVED').length,
     ALL: conversations.length
   };
@@ -54,11 +56,13 @@ export const QueueSidebar: React.FC<QueueSidebarProps> = ({
     // Queue filter
     if (activeQueue === 'NEEDS_HUMAN' && conv.status !== 'NEEDS_HUMAN') return false;
     if (activeQueue === 'ASSIGNED_TO_ME') {
-      const isMine = conv.status === 'ASSIGNED' && (conv.assignedAgentId === currentAgentId || conv.assignedAgentName?.includes('Afnan'));
+      const isMine =
+        (conv.status === 'ASSIGNED' || conv.status === 'HUMAN_HANDLING') &&
+        (conv.assignedAgentId === currentAgentId || conv.assignedAgentName?.includes('Afnan'));
       if (!isMine) return false;
     }
     if (activeQueue === 'AI_HANDLING' && conv.status !== 'AI_HANDLING') return false;
-    if (activeQueue === 'WAITING_CUSTOMER' && conv.status !== 'WAITING_CUSTOMER') return false;
+    if (activeQueue === 'WAITING_CUSTOMER' && conv.status !== 'WAITING_CUSTOMER' && conv.status !== 'WAITING_FOR_CUSTOMER') return false;
     if (activeQueue === 'RESOLVED' && conv.status !== 'RESOLVED') return false;
 
     // Priority filter
@@ -266,13 +270,13 @@ export const QueueSidebar: React.FC<QueueSidebarProps> = ({
                         ResolveAI
                       </span>
                     )}
-                    {conv.status === 'ASSIGNED' && (
+                    {(conv.status === 'ASSIGNED' || conv.status === 'HUMAN_HANDLING') && (
                       <span className="text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1">
                         <Headset className="w-3 h-3" />
                         {conv.assignedAgentName || 'Agent'}
                       </span>
                     )}
-                    {conv.status === 'WAITING_CUSTOMER' && (
+                    {(conv.status === 'WAITING_CUSTOMER' || conv.status === 'WAITING_FOR_CUSTOMER') && (
                       <span className="text-amber-600 dark:text-amber-400 flex items-center gap-1">
                         <Clock3 className="w-3 h-3" />
                         Waiting Customer

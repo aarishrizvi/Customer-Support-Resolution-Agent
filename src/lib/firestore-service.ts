@@ -14,7 +14,7 @@ import {
   limit
 } from 'firebase/firestore';
 import { User } from 'firebase/auth';
-import { db, handleFirestoreError, OperationType } from './firebase';
+import { db, auth, handleFirestoreError, OperationType } from './firebase';
 import { 
   Conversation, 
   Message, 
@@ -33,45 +33,93 @@ import {
   INITIAL_CONVERSATIONS,
   INITIAL_MESSAGES
 } from './mock-data';
+import { isAdminEmail } from './access-config';
 
 // ==========================================
 // User Profiles & Roles
 // ==========================================
 
+// Firestore can hang indefinitely when the backend is unreachable, which
+// silently blocks routing. Always bound profile reads so the session resolves.
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (err) => { clearTimeout(timer); reject(err); }
+    );
+  });
+}
+
+// Firestore rejects a payload containing an explicitly `undefined` field with
+// "Unsupported field value: undefined". Optional fields (attachments,
+// internalNote, priority, ...) are passed as undefined all over the app, which
+// silently failed every message write. Always route payloads through clean().
+function clean<T extends Record<string, unknown>>(data: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out as T;
+}
+
 export async function getOrCreateUserProfile(user: User, initialDisplayName?: string): Promise<UserProfile> {
   const userDocRef = doc(db, 'users', user.uid);
+  const allowlistedAdmin = isAdminEmail(user.email);
   const fallbackProfile: UserProfile = {
     uid: user.uid,
     email: user.email || '',
     displayName: initialDisplayName || user.displayName || user.email?.split('@')[0] || 'Customer',
     photoURL: user.photoURL || undefined,
-    role: 'CUSTOMER',
+    role: allowlistedAdmin ? 'ADMIN' : 'CUSTOMER',
     createdAt: new Date().toISOString()
   };
 
   try {
-    const snap = await getDoc(userDocRef);
+    const snap = await withTimeout(getDoc(userDocRef), 6000, 'Profile read');
     if (snap.exists()) {
       const data = snap.data();
+      const storedRole = (data.role as UserRole) || 'CUSTOMER';
+      const role: UserRole = allowlistedAdmin ? 'ADMIN' : storedRole;
+
+      // Bootstrap / heal the admin allowlist: keep the stored doc in sync
+      if (allowlistedAdmin && storedRole !== 'ADMIN') {
+        await withTimeout(
+          setDoc(userDocRef, {
+            uid: user.uid,
+            name: data.name || data.displayName || fallbackProfile.displayName,
+            email: data.email || user.email || '',
+            role: 'ADMIN',
+            createdAt: data.createdAt || fallbackProfile.createdAt
+          }, { merge: true }),
+          6000,
+          'Admin bootstrap write'
+        ).catch((e) => console.warn('Admin bootstrap write pending:', e));
+      }
+
       return {
         uid: user.uid,
         email: data.email || user.email || '',
         displayName: data.name || data.displayName || initialDisplayName || user.displayName || 'Customer',
         photoURL: user.photoURL || undefined,
-        role: (data.role as UserRole) || 'CUSTOMER',
+        role,
         createdAt: data.createdAt || new Date().toISOString()
       };
     }
 
     // New Registration: MUST strictly be role: "CUSTOMER"
-    // No role selector on registration page!
-    await setDoc(userDocRef, {
-      uid: fallbackProfile.uid,
-      name: fallbackProfile.displayName,
-      email: fallbackProfile.email,
-      role: 'CUSTOMER', // Explicitly CUSTOMER
-      createdAt: fallbackProfile.createdAt
-    });
+    // unless the email is on the trusted admin allowlist.
+    await withTimeout(
+      setDoc(userDocRef, {
+        uid: fallbackProfile.uid,
+        name: fallbackProfile.displayName,
+        email: fallbackProfile.email,
+        role: fallbackProfile.role,
+        createdAt: fallbackProfile.createdAt
+      }),
+      6000,
+      'Profile write'
+    );
 
     return fallbackProfile;
   } catch (err: any) {
@@ -85,15 +133,39 @@ export async function getOrCreateUserProfile(user: User, initialDisplayName?: st
         uid: fallbackProfile.uid,
         name: fallbackProfile.displayName,
         email: fallbackProfile.email,
-        role: 'CUSTOMER',
+        role: fallbackProfile.role,
         createdAt: fallbackProfile.createdAt
       }).catch((e) => console.warn('Background profile save pending reconnection:', e));
 
       return fallbackProfile;
     }
 
-    handleFirestoreError(err, OperationType.GET, `users/${user.uid}`);
-    throw err;
+    // Firestore never answered: proceed with the local access config instead of
+    // hanging the whole session (this is what made /support and /admin look dead).
+    if (errMsg.includes('timed out')) {
+      console.warn('Firestore profile operation timed out; using local access config:', errMsg);
+      return fallbackProfile;
+    }
+
+    // Never break the signed-in session over this: fall back to the client-side
+    // access config so routes still work. Firestore rules remain the real
+    // enforcement point for data access.
+    if (
+      errMsg.includes('permission') ||
+      errMsg.includes('denied') ||
+      errMsg.includes('insufficient') ||
+      errMsg.includes('unauthenticated')
+    ) {
+      console.warn(
+        'Firestore rejected the profile read/write. Publish firestore.rules to restore data access. Falling back to local access config:',
+        errMsg
+      );
+      return fallbackProfile;
+    }
+
+    // Unexpected error: surface it, but still keep the session alive
+    console.error('Unexpected error while loading user profile:', err);
+    return fallbackProfile;
   }
 }
 
@@ -104,11 +176,15 @@ export function subscribeToUserProfile(uid: string, callback: (profile: UserProf
     (snap) => {
       if (snap.exists()) {
         const data = snap.data();
+        const storedRole = (data.role as UserRole) || 'CUSTOMER';
+        // Trust the signed-in account email too: an older doc may be missing
+        // `email`, which would otherwise downgrade a valid admin to CUSTOMER.
+        const allowlistedAdmin = isAdminEmail(data.email) || isAdminEmail(auth.currentUser?.email);
         callback({
           uid,
-          email: data.email || '',
+          email: data.email || auth.currentUser?.email || '',
           displayName: data.name || data.displayName || 'Customer',
-          role: (data.role as UserRole) || 'CUSTOMER',
+          role: allowlistedAdmin ? 'ADMIN' : storedRole,
           createdAt: data.createdAt || new Date().toISOString()
         });
       } else {
@@ -121,13 +197,44 @@ export function subscribeToUserProfile(uid: string, callback: (profile: UserProf
   );
 }
 
-// Internal tool to assign role in Firestore (e.g. for testing or provisioning support agents)
-export async function assignUserRole(uid: string, role: UserRole): Promise<void> {
+// Admin CMS: real-time directory of every registered user.
+// Firestore rules only allow this list query for ADMIN / SUPPORT_AGENT.
+export function subscribeToAllUsers(callback: (users: UserProfile[]) => void) {
+  const colRef = collection(db, 'users');
+  return onSnapshot(
+    colRef,
+    (snapshot) => {
+      const users: UserProfile[] = [];
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        users.push({
+          uid: docSnap.id,
+          email: d.email || '',
+          displayName: d.name || d.displayName || 'Customer',
+          photoURL: d.photoURL,
+          role: isAdminEmail(d.email) ? 'ADMIN' : ((d.role as UserRole) || 'CUSTOMER'),
+          createdAt: d.createdAt || new Date().toISOString()
+        });
+      });
+      users.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      callback(users);
+    },
+    (error) => {
+      console.warn('Users directory listener:', error.message);
+      callback([]);
+    }
+  );
+}
+
+// Role grant / revoke. Server-side enforcement lives in firestore.rules:
+// only an ADMIN (allowlist or role) may change a `role` field.
+export async function setUserRole(uid: string, role: UserRole): Promise<void> {
   const userDocRef = doc(db, 'users', uid);
   try {
     await updateDoc(userDocRef, { role });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `users/${uid}`);
+    throw err;
   }
 }
 
@@ -191,7 +298,10 @@ export function subscribeToConversations(
       callback(convs);
     },
     (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'conversations');
+      // Listeners must never throw (it would break the React render loop):
+      // surface the problem and hand the UI an empty list instead.
+      console.warn('Conversations listener:', error.message, error.code || '');
+      callback([]);
     }
   );
 }
@@ -251,7 +361,7 @@ export async function createConversationInDb(params: {
   const msgRef = doc(collection(db, 'conversations', convId, 'messages'));
 
   try {
-    await setDoc(convRef, {
+    await setDoc(convRef, clean({
       customerId: params.customerId,
       customerName: params.customerName,
       customerEmail: params.customerEmail,
@@ -265,16 +375,16 @@ export async function createConversationInDb(params: {
       lastMessageText: params.initialMessageText,
       lastMessageTimestamp: now,
       suggestedArticles: []
-    });
+    }));
 
-    await setDoc(msgRef, {
+    await setDoc(msgRef, clean({
       conversationId: convId,
       senderId: params.customerId,
       senderName: params.customerName,
       senderRole: 'CUSTOMER',
       content: params.initialMessageText,
       timestamp: now
-    });
+    }));
 
     return convId;
   } catch (err) {
@@ -300,19 +410,19 @@ export async function sendMessageToDb(params: {
   const convRef = doc(db, 'conversations', conversationId);
 
   try {
-    await setDoc(msgRef, {
+    await setDoc(msgRef, clean({
       conversationId,
       ...msgData,
       timestamp: now
-    });
+    }));
 
     // If it is not an internal agent note, update conversation's lastMessage
     if (!params.internalNote) {
-      await updateDoc(convRef, {
+      await updateDoc(convRef, clean({
         lastMessageText: params.content,
         lastMessageTimestamp: now,
         updatedAt: now
-      });
+      }));
     }
 
     return msgRef.id;
@@ -338,7 +448,7 @@ export async function updateConversationAiState(params: {
 
   try {
     // 1. Write AI reply message
-    await setDoc(msgRef, {
+    await setDoc(msgRef, clean({
       conversationId,
       senderId: 'resolve_ai',
       senderName: 'ResolveAI',
@@ -346,23 +456,23 @@ export async function updateConversationAiState(params: {
       content: replyMessage,
       timestamp: now,
       operationalState
-    });
+    }));
 
     // 2. If needs human, write system notification divider
     if (status === 'NEEDS_HUMAN') {
       const sysMsgRef = doc(collection(db, 'conversations', conversationId, 'messages'));
-      await setDoc(sysMsgRef, {
+      await setDoc(sysMsgRef, clean({
         conversationId,
         senderId: 'system',
         senderName: 'System',
         senderRole: 'SYSTEM',
         content: 'Conversation dispatched to Support Agent Queue (Priority: HIGH)',
         timestamp: now
-      });
+      }));
     }
 
     // 3. Update conversation document
-    await updateDoc(convRef, {
+    await updateDoc(convRef, clean({
       status,
       handlerType: status === 'NEEDS_HUMAN' ? 'HUMAN' : 'AI',
       priority: status === 'NEEDS_HUMAN' ? 'HIGH' : undefined,
@@ -371,7 +481,7 @@ export async function updateConversationAiState(params: {
       lastMessageText: replyMessage,
       lastMessageTimestamp: now,
       updatedAt: now
-    });
+    }));
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `conversations/${conversationId}`);
     throw err;
@@ -391,29 +501,29 @@ export async function takeConversationInDb(params: {
   try {
     // 1. System divider
     const sysMsgRef = doc(collection(db, 'conversations', conversationId, 'messages'));
-    await setDoc(sysMsgRef, {
+    await setDoc(sysMsgRef, clean({
       conversationId,
       senderId: 'system',
       senderName: 'System',
       senderRole: 'SYSTEM',
       content: `${agentName} joined the conversation`,
       timestamp: now
-    });
+    }));
 
     // 2. Agent greeting
     const agentMsgRef = doc(collection(db, 'conversations', conversationId, 'messages'));
     const greeting = "I've reviewed your request and history. I'll take care of this for you.";
-    await setDoc(agentMsgRef, {
+    await setDoc(agentMsgRef, clean({
       conversationId,
       senderId: agentId,
       senderName: agentName,
       senderRole: 'AGENT',
       content: greeting,
       timestamp: now
-    });
+    }));
 
     // 3. Update conversation record
-    await updateDoc(convRef, {
+    await updateDoc(convRef, clean({
       status: 'HUMAN_HANDLING',
       handlerType: 'HUMAN',
       assignedAgentId: agentId,
@@ -421,7 +531,7 @@ export async function takeConversationInDb(params: {
       lastMessageText: greeting,
       lastMessageTimestamp: now,
       updatedAt: now
-    });
+    }));
 
     // 4. Log Activity
     await logActivityToDb({
@@ -448,20 +558,20 @@ export async function resolveConversationInDb(params: {
   const sysMsgRef = doc(collection(db, 'conversations', conversationId, 'messages'));
 
   try {
-    await setDoc(sysMsgRef, {
+    await setDoc(sysMsgRef, clean({
       conversationId,
       senderId: 'system',
       senderName: 'System',
       senderRole: 'SYSTEM',
       content: `Ticket marked as Resolved by ${agentName}`,
       timestamp: now
-    });
+    }));
 
-    await updateDoc(convRef, {
+    await updateDoc(convRef, clean({
       status: 'RESOLVED',
       resolvedAt: now,
       updatedAt: now
-    });
+    }));
 
     await logActivityToDb({
       conversationId,
@@ -484,36 +594,36 @@ export async function requestHumanInDb(conversationId: string, customerName: str
   try {
     // 1. System divider
     const sysMsgRef = doc(collection(db, 'conversations', conversationId, 'messages'));
-    await setDoc(sysMsgRef, {
+    await setDoc(sysMsgRef, clean({
       conversationId,
       senderId: 'system',
       senderName: 'System',
       senderRole: 'SYSTEM',
       content: 'Customer requested human support agent assistance',
       timestamp: now
-    });
+    }));
 
     // 2. AI handoff note
     const aiMsgRef = doc(collection(db, 'conversations', conversationId, 'messages'));
     const text = "I have transferred this conversation to our support operations queue. A support agent will review your history and join shortly.";
-    await setDoc(aiMsgRef, {
+    await setDoc(aiMsgRef, clean({
       conversationId,
       senderId: 'resolve_ai',
       senderName: 'ResolveAI',
       senderRole: 'AI',
       content: text,
       timestamp: now
-    });
+    }));
 
     // 3. Update Conversation
-    await updateDoc(convRef, {
+    await updateDoc(convRef, clean({
       status: 'NEEDS_HUMAN',
       handlerType: 'HUMAN',
       priority: 'HIGH',
       lastMessageText: text,
       lastMessageTimestamp: now,
       updatedAt: now
-    });
+    }));
 
     await logActivityToDb({
       conversationId,
@@ -564,10 +674,10 @@ export async function addKnowledgeArticleToDb(article: Omit<KnowledgeArticle, 'i
   const colRef = collection(db, 'knowledgeBase');
   const now = new Date().toISOString();
   try {
-    await addDoc(colRef, {
+    await addDoc(colRef, clean({
       ...article,
       updatedAt: now
-    });
+    }));
   } catch (err) {
     handleFirestoreError(err, OperationType.CREATE, 'knowledgeBase');
   }
@@ -576,10 +686,10 @@ export async function addKnowledgeArticleToDb(article: Omit<KnowledgeArticle, 'i
 export async function updateKnowledgeArticleInDb(id: string, updates: Partial<KnowledgeArticle>) {
   const docRef = doc(db, 'knowledgeBase', id);
   try {
-    await updateDoc(docRef, {
+    await updateDoc(docRef, clean({
       ...updates,
       updatedAt: new Date().toISOString()
-    });
+    }));
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `knowledgeBase/${id}`);
   }
@@ -650,10 +760,10 @@ export function subscribeToActivities(callback: (activities: Activity[]) => void
 export async function logActivityToDb(act: Omit<Activity, 'id' | 'timestamp'>) {
   const colRef = collection(db, 'activities');
   try {
-    await addDoc(colRef, {
+    await addDoc(colRef, clean({
       ...act,
       timestamp: new Date().toISOString()
-    });
+    }));
   } catch (err) {
     // Non-fatal logging
     console.warn('Failed to log activity to Firestore:', err);
@@ -665,7 +775,7 @@ async function seedInitialFirestoreData() {
   try {
     // Seed initial KB articles
     for (const art of INITIAL_KNOWLEDGE_ARTICLES) {
-      await setDoc(doc(db, 'knowledgeBase', art.id), {
+      await setDoc(doc(db, 'knowledgeBase', art.id), clean({
         title: art.title,
         category: art.category,
         excerpt: art.excerpt,
@@ -673,12 +783,12 @@ async function seedInitialFirestoreData() {
         tags: art.tags,
         updatedAt: art.updatedAt,
         author: art.author
-      });
+      }));
     }
 
     // Seed initial Customers
     for (const cust of INITIAL_CUSTOMERS) {
-      await setDoc(doc(db, 'customers', cust.id), {
+      await setDoc(doc(db, 'customers', cust.id), clean({
         name: cust.name,
         email: cust.email,
         tier: cust.tier,
@@ -687,19 +797,19 @@ async function seedInitialFirestoreData() {
         createdAt: cust.createdAt,
         company: cust.company,
         phone: cust.phone
-      });
+      }));
     }
 
     // Seed initial Activities
     for (const act of INITIAL_ACTIVITIES) {
-      await setDoc(doc(db, 'activities', act.id), {
+      await setDoc(doc(db, 'activities', act.id), clean({
         conversationId: act.conversationId,
         type: act.type,
         description: act.description,
         actorName: act.actorName,
         actorRole: act.actorRole,
         timestamp: act.timestamp
-      });
+      }));
     }
   } catch (e) {
     console.warn('Seed operation completed or skipped:', e);

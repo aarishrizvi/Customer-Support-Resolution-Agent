@@ -9,6 +9,7 @@ import {
   Headset, 
   UserCircle,
   FileText,
+  Loader2,
   X
 } from 'lucide-react';
 import { Conversation, Message, Attachment } from '../../types';
@@ -17,6 +18,7 @@ interface CustomerConversationProps {
   conversation: Conversation;
   messages: Message[];
   isAiTyping: boolean;
+  isSending?: boolean;
   aiOperationalState?: string;
   onSendMessage: (content: string, attachments?: Attachment[]) => void;
   onRequestHuman: () => void;
@@ -28,6 +30,7 @@ export const CustomerConversation: React.FC<CustomerConversationProps> = ({
   conversation,
   messages,
   isAiTyping,
+  isSending = false,
   aiOperationalState,
   onSendMessage,
   onRequestHuman,
@@ -88,12 +91,14 @@ export const CustomerConversation: React.FC<CustomerConversationProps> = ({
           color: 'text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800',
           icon: <AlertCircle className="w-3.5 h-3.5" />
         };
+      case 'HUMAN_HANDLING':
       case 'ASSIGNED':
         return {
-          label: `${conversation.assignedAgentName || 'Agent'} is actively handling`,
+          label: `${conversation.assignedAgentName || 'A support agent'} is actively handling`,
           color: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800',
           icon: <Headset className="w-3.5 h-3.5" />
         };
+      case 'WAITING_FOR_CUSTOMER':
       case 'WAITING_CUSTOMER':
         return {
           label: 'Awaiting your reply',
@@ -143,7 +148,7 @@ export const CustomerConversation: React.FC<CustomerConversationProps> = ({
             <span>{statusInfo.label}</span>
           </div>
 
-          {conversation.status !== 'RESOLVED' && conversation.status !== 'ASSIGNED' && (
+          {conversation.status !== 'RESOLVED' && conversation.status !== 'ASSIGNED' && conversation.status !== 'HUMAN_HANDLING' && (
             <button
               onClick={onRequestHuman}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium bg-neutral-100 dark:bg-neutral-800 hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors border border-neutral-200 dark:border-neutral-700"
@@ -240,6 +245,14 @@ export const CustomerConversation: React.FC<CustomerConversationProps> = ({
           );
         })}
 
+        {/* Outbound message in flight */}
+        {isSending && (
+          <div className="flex items-center justify-end gap-2 px-1 text-xs text-neutral-500">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <span>Sending your message...</span>
+          </div>
+        )}
+
         {/* AI Operational State / Typing Indicator */}
         {isAiTyping && (
           <div className="flex flex-col items-start space-y-1">
@@ -325,11 +338,11 @@ export const CustomerConversation: React.FC<CustomerConversationProps> = ({
 
             <button
               type="submit"
-              disabled={!inputText.trim() && attachments.length === 0}
+              disabled={(!inputText.trim() && attachments.length === 0) || isSending}
               className="p-2.5 rounded-md bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 hover:opacity-90 disabled:opacity-30 disabled:hover:opacity-30 transition-all shrink-0"
               title="Send reply"
             >
-              <Send className="w-4 h-4" />
+              {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </form>
 

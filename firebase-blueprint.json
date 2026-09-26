@@ -8,7 +8,7 @@
         "uid": { "type": "string", "maxLength": 128 },
         "email": { "type": "string", "maxLength": 256 },
         "displayName": { "type": "string", "maxLength": 128 },
-        "role": { "type": "string", "enum": ["CUSTOMER", "SUPPORT_AGENT"] },
+        "role": { "type": "string", "enum": ["CUSTOMER", "SUPPORT_AGENT", "ADMIN"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role"]

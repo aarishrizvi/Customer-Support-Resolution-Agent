@@ -7,6 +7,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ----------------------------------------------------------
+    // ADMIN BOOTSTRAP: must match ADMIN_EMAILS in
+    // src/lib/access-config.ts (lowercase).
+    // ----------------------------------------------------------
+    function adminEmails() {
+      return ['arish.rizvi.395@gmail.com'];
+    }
+
     // Helper functions
     function isSignedIn() {
       return request.auth != null;
@@ -16,12 +24,30 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAllowlistedAdmin() {
+      return isSignedIn() && request.auth.token.email in adminEmails();
+    }
+
+    function roleOf(userId) {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(userId))
+        ? get(/databases/$(database)/documents/users/$(userId)).data.role
+        : 'GUEST';
+    }
+
+    function isAdmin() {
+      return isAllowlistedAdmin() || roleOf(request.auth.uid) == 'ADMIN';
+    }
+
     function isSupportAgent() {
       return isSignedIn() && (
         exists(/databases/$(database)/documents/agents/$(request.auth.uid)) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'SUPPORT_AGENT')
+        roleOf(request.auth.uid) == 'SUPPORT_AGENT'
       );
+    }
+
+    // Everything the Support Console needs: agents AND admins
+    function hasSupportAccess() {
+      return isSupportAgent() || isAdmin();
     }
 
     function isValidId(id) {
@@ -33,66 +59,80 @@ service cloud.firestore {
       allow read: if true;
     }
 
-    // Users Collection: public register enforces role == 'CUSTOMER'
+    // Users Collection
+    // - Public registration may only create role: 'CUSTOMER'
+    // - Allowlisted bootstrap emails may create themselves as ADMIN
+    // - ONLY an admin may ever change the `role` field
+    // - Owners may edit their own profile, but never their own role
     match /users/{userId} {
-      allow get: if isOwner(userId) || isSupportAgent();
-      allow list: if isSupportAgent();
+      allow get: if isOwner(userId) || hasSupportAccess();
+      allow list: if hasSupportAccess();
+
       allow create: if isOwner(userId) && (
-        !('role' in request.resource.data) || request.resource.data.role == 'CUSTOMER'
+        isAdmin() ||
+        !('role' in request.resource.data) ||
+        request.resource.data.role == 'CUSTOMER'
       );
-      allow update: if isOwner(userId) || isSupportAgent();
+
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.email == resource.data.email &&
+        request.resource.data.uid == resource.data.uid
+      );
+
       allow delete: if false;
     }
 
     // Support Agents Collection
     match /agents/{agentId} {
       allow read: if isSignedIn();
-      allow write: if isSupportAgent();
+      allow write: if hasSupportAccess();
     }
 
     // Conversations Collection
     match /conversations/{conversationId} {
-      allow get: if isSupportAgent() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow list: if isSupportAgent() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow get: if hasSupportAccess() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow list: if hasSupportAccess() || (isSignedIn() && resource.data.customerId == request.auth.uid);
       allow create: if isSignedIn() && (
-        isSupportAgent() || 
+        hasSupportAccess() ||
         (request.resource.data.customerId == request.auth.uid)
       );
-      allow update: if isSupportAgent() || (isSignedIn() && resource.data.customerId == request.auth.uid);
-      allow delete: if isSupportAgent();
+      allow update: if hasSupportAccess() || (isSignedIn() && resource.data.customerId == request.auth.uid);
+      allow delete: if hasSupportAccess();
 
       // Messages Subcollection
       match /messages/{messageId} {
-        allow read: if isSupportAgent() || (
-          isSignedIn() && 
+        allow read: if hasSupportAccess() || (
+          isSignedIn() &&
           get(/databases/$(database)/documents/conversations/$(conversationId)).data.customerId == request.auth.uid
         );
-        allow create: if isSupportAgent() || (
-          isSignedIn() && 
+        allow create: if hasSupportAccess() || (
+          isSignedIn() &&
           get(/databases/$(database)/documents/conversations/$(conversationId)).data.customerId == request.auth.uid
         );
-        allow update: if isSupportAgent();
-        allow delete: if isSupportAgent();
+        allow update: if hasSupportAccess();
+        allow delete: if hasSupportAccess();
       }
     }
 
     // Knowledge Base
     match /knowledgeBase/{articleId} {
       allow read: if true;
-      allow write: if isSupportAgent();
+      allow write: if hasSupportAccess();
     }
 
     // Customer Profiles
     match /customers/{customerId} {
-      allow read: if isSupportAgent() || isOwner(customerId);
-      allow write: if isSupportAgent();
+      allow read: if hasSupportAccess() || isOwner(customerId);
+      allow write: if hasSupportAccess();
     }
 
     // Activity Log
     match /activities/{activityId} {
-      allow read: if isSupportAgent();
+      allow read: if hasSupportAccess();
       allow create: if isSignedIn();
-      allow update, delete: if isSupportAgent();
+      allow update, delete: if hasSupportAccess();
     }
   }
 }

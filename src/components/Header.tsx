@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User } from 'firebase/auth';
-import { Headset, Users, LogOut, Shield, ChevronDown, UserCheck, ShieldCheck } from 'lucide-react';
+import { Headset, Users, LogOut, Shield, ChevronDown, UserCheck, ShieldCheck, Sun, Moon } from 'lucide-react';
 import { logout } from '../lib/firebase';
 import { UserProfile } from '../types';
+import { getCurrentTheme, toggleTheme } from '../lib/theme';
 
 interface HeaderProps {
   currentMode: 'CUSTOMER' | 'AGENT' | 'ADMIN';
@@ -30,6 +31,16 @@ export const Header: React.FC<HeaderProps> = ({
   needsHumanCount = 0
 }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [isDark, setIsDark] = useState(() => getCurrentTheme() === 'dark');
+
+  useEffect(() => {
+    setIsDark(getCurrentTheme() === 'dark');
+  }, []);
+
+  const handleThemeToggle = () => {
+    const nextTheme = toggleTheme();
+    setIsDark(nextTheme === 'dark');
+  };
 
   const handleSignOut = async () => {
     try {
@@ -86,6 +97,15 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Route navigation + User / Authentication Actions */}
         <div className="flex items-center gap-2 sm:gap-3">
+          <button
+            type="button"
+            onClick={handleThemeToggle}
+            className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors text-neutral-600 dark:text-neutral-400"
+            aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+          </button>
           {userProfile && onOpenSupport && (userProfile.role === 'SUPPORT_AGENT' || userProfile.role === 'ADMIN') && (
             <button
               type="button"
